@@ -2,15 +2,21 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import * as faceapi from 'face-api.js'
 import './App.css'
 
-type EmotionState = 'neutral' | 'happy' | 'sad' | 'loading' | 'error'
+type EmotionState = 'neutral' | 'happy' | 'sad' | 'surprised' | 'loading' | 'error'
 
 const HAPPY_THRESHOLD = 0.6
 const SAD_THRESHOLD = 0.4
+const SURPRISED_THRESHOLD = 0.5
 const SOUND_COOLDOWN_MS = 2000
 
 const EXPR_LABELS: Record<string, string> = {
   neutral: '무표정', happy: '행복', sad: '슬픔',
   angry: '화남', fearful: '두려움', disgusted: '역겨움', surprised: '놀람',
+}
+
+const EXPR_EMOJI: Record<string, string> = {
+  neutral: '😐', happy: '😄', sad: '😢',
+  angry: '😠', fearful: '😨', disgusted: '🤢', surprised: '😲',
 }
 
 export default function App() {
@@ -20,12 +26,16 @@ export default function App() {
   const lastSoundTimeRef = useRef<number>(0)
   const loopRef = useRef<number | null>(null)
   const runningRef = useRef(false)
+  const streamRef = useRef<MediaStream | null>(null)
 
   const [status, setStatus] = useState<EmotionState>('loading')
   const [emotionLabel, setEmotionLabel] = useState('')
+  const [expressions, setExpressions] = useState<Record<string, number>>({})
   const [log, setLog] = useState<string[]>([])
 
-  const addLog = (msg: string) => setLog(prev => [msg, ...prev].slice(0, 5))
+  const addLog = useCallback((msg: string) => {
+    setLog(prev => [msg, ...prev].slice(0, 5))
+  }, [])
 
   const getAudioCtx = () => {
     if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
@@ -91,12 +101,28 @@ export default function App() {
     seg(t + 2.1, 240, 340, 0.9)
   }, [])
 
-  // 감지 루프 (독립적으로 실행)
+  const playSurprise = useCallback(() => {
+    const ctx = getAudioCtx()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.connect(gain); gain.connect(ctx.destination)
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(300, ctx.currentTime)
+    osc.frequency.exponentialRampToValueAtTime(900, ctx.currentTime + 0.15)
+    osc.frequency.exponentialRampToValueAtTime(600, ctx.currentTime + 0.4)
+    gain.gain.setValueAtTime(0, ctx.currentTime)
+    gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + 0.05)
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45)
+    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.45)
+  }, [])
+
   const startDetectionLoop = useCallback(() => {
     if (runningRef.current) return
     runningRef.current = true
 
     const tick = async () => {
+      if (!runningRef.current) return
+
       const video = videoRef.current
       const canvas = canvasRef.current
       if (!video || !canvas || video.paused || video.readyState < 2) {
@@ -108,6 +134,8 @@ export default function App() {
         .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
         .withFaceExpressions()
 
+      if (!runningRef.current) return
+
       if (result) {
         const dims = faceapi.matchDimensions(canvas, video, true)
         const resized = faceapi.resizeResults(result, dims)
@@ -115,7 +143,10 @@ export default function App() {
         ctx2d.clearRect(0, 0, canvas.width, canvas.height)
         faceapi.draw.drawDetections(canvas, resized)
 
-        const { happy = 0, sad = 0 } = result.expressions
+        const exprs = result.expressions
+        setExpressions(exprs as unknown as Record<string, number>)
+
+        const { happy = 0, sad = 0, surprised = 0 } = exprs
         const now = Date.now()
         const canPlay = now - lastSoundTimeRef.current > SOUND_COOLDOWN_MS
 
@@ -135,31 +166,39 @@ export default function App() {
             playCrying()
             addLog(`😢 엉엉~ (${(sad * 100).toFixed(0)}%)`)
           }
+        } else if (surprised > SURPRISED_THRESHOLD) {
+          setStatus('surprised')
+          setEmotionLabel(`😲 놀람! (${(surprised * 100).toFixed(0)}%)`)
+          if (canPlay) {
+            lastSoundTimeRef.current = now
+            playSurprise()
+            addLog(`😲 깜짝! (${(surprised * 100).toFixed(0)}%)`)
+          }
         } else {
           setStatus('neutral')
-          const top = Object.entries(result.expressions).sort((a, b) => b[1] - a[1])[0]
-          setEmotionLabel(`😐 ${EXPR_LABELS[top[0]] ?? top[0]} (${(top[1] * 100).toFixed(0)}%)`)
+          const top = Object.entries(exprs).sort((a, b) => b[1] - a[1])[0]
+          setEmotionLabel(`${EXPR_EMOJI[top[0]] ?? '😐'} ${EXPR_LABELS[top[0]] ?? top[0]} (${(top[1] * 100).toFixed(0)}%)`)
         }
       } else {
         setStatus('neutral')
         setEmotionLabel('얼굴을 카메라에 비춰주세요')
+        setExpressions({})
       }
 
       loopRef.current = requestAnimationFrame(tick)
     }
 
     loopRef.current = requestAnimationFrame(tick)
-  }, [playGiggle, playCrying])
+  }, [playGiggle, playCrying, playSurprise, addLog])
 
   useEffect(() => {
     const init = async () => {
       try {
-        // 1. 모델 로드
         await faceapi.nets.tinyFaceDetector.loadFromUri('/models')
         await faceapi.nets.faceExpressionNet.loadFromUri('/models')
 
-        // 2. 카메라 시작
         const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+        streamRef.current = stream
         const video = videoRef.current!
         video.srcObject = stream
         await video.play()
@@ -176,18 +215,30 @@ export default function App() {
     return () => {
       runningRef.current = false
       if (loopRef.current) cancelAnimationFrame(loopRef.current)
+      streamRef.current?.getTracks().forEach(t => t.stop())
     }
   }, [startDetectionLoop])
 
-  const bgClass = status === 'happy' ? 'bg-happy' : status === 'sad' ? 'bg-sad' : 'bg-neutral'
+  const bgClass = {
+    happy: 'bg-happy', sad: 'bg-sad', surprised: 'bg-surprised',
+    loading: 'bg-neutral', error: 'bg-neutral', neutral: 'bg-neutral',
+  }[status]
+
+  const titleText = {
+    happy: '낄낄낄 😂', sad: '엉엉 😭', surprised: '깜짝! 😲',
+    loading: '표정 감지기 👀', error: '표정 감지기 👀', neutral: '표정 감지기 👀',
+  }[status]
 
   return (
     <div className={`app-container ${bgClass}`}>
-      <h1 className="title">
-        {status === 'happy' ? '낄낄낄 😂' : status === 'sad' ? '엉엉 😭' : '표정 감지기 👀'}
-      </h1>
+      <h1 className="title">{titleText}</h1>
 
-      {status === 'loading' && <p className="status-text">AI 모델 불러오는 중...</p>}
+      {status === 'loading' && (
+        <div className="loading-state">
+          <div className="spinner" />
+          <p className="status-text">AI 모델 불러오는 중...</p>
+        </div>
+      )}
       {status === 'error' && <p className="status-text error">카메라 접근 실패 또는 모델 로드 오류</p>}
 
       <div className="video-wrapper">
@@ -197,6 +248,25 @@ export default function App() {
 
       {emotionLabel && <div className="emotion-badge">{emotionLabel}</div>}
 
+      {Object.keys(expressions).length > 0 && (
+        <div className="expr-bars">
+          {Object.entries(expressions)
+            .sort((a, b) => b[1] - a[1])
+            .map(([key, val]) => (
+              <div key={key} className="expr-bar-row">
+                <span className="expr-bar-label">{EXPR_EMOJI[key]} {EXPR_LABELS[key] ?? key}</span>
+                <div className="expr-bar-track">
+                  <div
+                    className={`expr-bar-fill expr-bar-${key}`}
+                    style={{ width: `${(val * 100).toFixed(1)}%` }}
+                  />
+                </div>
+                <span className="expr-bar-pct">{(val * 100).toFixed(0)}%</span>
+              </div>
+            ))}
+        </div>
+      )}
+
       {log.length > 0 && (
         <div className="log-box">
           {log.map((entry, i) => (
@@ -205,7 +275,7 @@ export default function App() {
         </div>
       )}
 
-      <p className="hint">웃으면 <strong>낄낄낄</strong>, 울면 <strong>엉엉</strong></p>
+      <p className="hint">웃으면 <strong>낄낄낄</strong>, 울면 <strong>엉엉</strong>, 놀라면 <strong>깜짝!</strong></p>
     </div>
   )
 }
