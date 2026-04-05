@@ -155,9 +155,8 @@ export default function App() {
     const init = async () => {
       try {
         // 1. 모델 로드
-        const modelsUrl = import.meta.env.BASE_URL + 'models'
-        await faceapi.nets.tinyFaceDetector.loadFromUri(modelsUrl)
-        await faceapi.nets.faceExpressionNet.loadFromUri(modelsUrl)
+        await faceapi.nets.tinyFaceDetector.loadFromUri('/models')
+        await faceapi.nets.faceExpressionNet.loadFromUri('/models')
 
         // 2. 카메라 시작
         const stream = await navigator.mediaDevices.getUserMedia({ video: true })
