@@ -189,57 +189,6 @@ body {
   color: #e9d5ff;
 }
 
-/* Expression confidence bars */
-.expr-bars {
-  width: min(480px, 90vw);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  padding: 12px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.expr-bar-row {
-  display: grid;
-  grid-template-columns: 80px 1fr 36px;
-  align-items: center;
-  gap: 10px;
-}
-
-.expr-bar-label {
-  font-size: 0.78rem;
-  color: #9ca3af;
-  white-space: nowrap;
-}
-
-.expr-bar-track {
-  height: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.expr-bar-fill {
-  height: 100%;
-  border-radius: 999px;
-  transition: width 0.2s ease;
-}
-
-.expr-bar-pct {
-  font-size: 0.72rem;
-  color: #6b7280;
-  text-align: right;
-}
-
-.expr-bar-happy    { background: #fbbf24; }
-.expr-bar-sad      { background: #60a5fa; }
-.expr-bar-surprised { background: #c084fc; }
-.expr-bar-angry    { background: #f87171; }
-.expr-bar-fearful  { background: #fb923c; }
-.expr-bar-disgusted { background: #4ade80; }
-.expr-bar-neutral  { background: #9ca3af; }
 
 .log-box {
   display: flex;
